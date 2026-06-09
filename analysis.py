@@ -12,6 +12,7 @@ from typing import Final
 
 import pandas as pd
 import requests
+from scipy.stats import pearsonr
 
 from data_loader import configure_logging
 
@@ -27,6 +28,8 @@ INCOME_GROUPS: Final[list[str]] = [
 _WB_COUNTRY_API: Final[str] = "https://api.worldbank.org/v2/country"
 _DEFAULT_START_YEAR: Final[int] = 1960
 _DEFAULT_END_YEAR: Final[int] = 2023
+_MIN_CORRELATION_YEARS: Final[int] = 3
+_TOP_N_COUNTRIES: Final[int] = 10
 
 
 def load_master_dataset(path: Path | str = "master_dataset.csv") -> pd.DataFrame:
@@ -267,3 +270,87 @@ def analyze_income_group_variability_change(
         results.loc[results["Largest_Change"], "Variability_Change"].iloc[0],
     )
     return results
+
+
+def _get_aggregate_country_codes() -> set[str]:
+    """Return World Bank entity codes classified as aggregates."""
+    response = requests.get(
+        _WB_COUNTRY_API,
+        params={"format": "json", "per_page": 400},
+        timeout=60,
+    )
+    response.raise_for_status()
+    countries = response.json()[1]
+    return {
+        country["id"]
+        for country in countries
+        if country.get("incomeLevel", {}).get("value") == "Aggregates"
+    }
+
+
+def compute_country_correlations(
+    df: pd.DataFrame,
+    x_column: str = "Fertility_Rate",
+    y_column: str = "Life_Expectancy_Total",
+    min_years: int = _MIN_CORRELATION_YEARS,
+) -> pd.DataFrame:
+    """Compute Pearson correlation between two indicators for each country.
+
+    Args:
+        df: Master dataset.
+        x_column: Independent variable column.
+        y_column: Dependent variable column.
+        min_years: Minimum paired observations required per country.
+
+    Returns:
+        DataFrame with correlation, p-value, and observation count per country.
+    """
+    aggregate_codes = _get_aggregate_country_codes()
+    country_df = df[~df["Country_Code"].isin(aggregate_codes)].copy()
+
+    records: list[dict[str, object]] = []
+    for country_code, group in country_df.groupby("Country_Code"):
+        paired = group.dropna(subset=[x_column, y_column])
+        if len(paired) < min_years:
+            continue
+
+        correlation, p_value = pearsonr(paired[x_column], paired[y_column])
+        records.append(
+            {
+                "Country": group["Country"].iloc[0],
+                "Country_Code": country_code,
+                "Correlation": correlation,
+                "P_Value": p_value,
+                "N_Years": len(paired),
+            }
+        )
+
+    correlations = pd.DataFrame(records).sort_values(
+        "Correlation", ascending=False
+    ).reset_index(drop=True)
+    logger.info("Q3: Computed correlations for %d countries", len(correlations))
+    return correlations
+
+
+def summarize_correlation_extremes(
+    correlations: pd.DataFrame,
+    top_n: int = _TOP_N_COUNTRIES,
+) -> dict[str, pd.DataFrame]:
+    """Summarize highest, lowest, and weakest absolute correlations.
+
+    Args:
+        correlations: Per-country correlation DataFrame.
+        top_n: Number of countries to return in each summary list.
+
+    Returns:
+        Dictionary with ``highest_positive``, ``highest_negative``, and
+        ``lowest_absolute`` DataFrames.
+    """
+    ranked = correlations.copy()
+    ranked["Abs_Correlation"] = ranked["Correlation"].abs()
+
+    return {
+        "highest_positive": ranked.nlargest(top_n, "Correlation").copy(),
+        "highest_negative": ranked.nsmallest(top_n, "Correlation").copy(),
+        "lowest_absolute": ranked.nsmallest(top_n, "Abs_Correlation").copy(),
+    }
