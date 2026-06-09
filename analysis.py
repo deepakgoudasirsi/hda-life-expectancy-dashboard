@@ -354,3 +354,122 @@ def summarize_correlation_extremes(
         "highest_negative": ranked.nsmallest(top_n, "Correlation").copy(),
         "lowest_absolute": ranked.nsmallest(top_n, "Abs_Correlation").copy(),
     }
+
+
+def export_analysis_results(
+    gap_results: pd.DataFrame,
+    variability_results: pd.DataFrame,
+    correlations: pd.DataFrame,
+    correlation_summaries: dict[str, pd.DataFrame],
+    output_path: Path | str = "analysis_results.csv",
+) -> Path:
+    """Export all analysis outputs to a single tidy CSV file.
+
+    Args:
+        gap_results: Output of :func:`analyze_income_group_gender_gap_change`.
+        variability_results: Output of :func:`analyze_income_group_variability_change`.
+        correlations: Full per-country correlation table.
+        correlation_summaries: Extreme correlation summaries.
+        output_path: Destination CSV path.
+
+    Returns:
+        Resolved path to the written CSV file.
+    """
+    export_frames: list[pd.DataFrame] = []
+
+    gap_export = gap_results.copy()
+    gap_export.insert(0, "Section", "Q1_Gender_Gap_Change")
+    export_frames.append(gap_export)
+
+    variability_export = variability_results.copy()
+    variability_export.insert(0, "Section", "Q2_Variability_Change")
+    export_frames.append(variability_export)
+
+    correlation_export = correlations.copy()
+    correlation_export.insert(0, "Section", "Q3_Country_Correlations")
+    export_frames.append(correlation_export)
+
+    for summary_name, summary_df in correlation_summaries.items():
+        summary_export = summary_df.copy()
+        summary_export.insert(0, "Section", f"Q3_{summary_name}")
+        export_frames.append(summary_export)
+
+    combined = pd.concat(export_frames, ignore_index=True, sort=False)
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    combined.to_csv(path, index=False)
+    logger.info("Exported analysis results to %s (%d rows)", path, len(combined))
+    return path
+
+
+def run_analysis(
+    master_path: Path | str = "master_dataset.csv",
+    output_path: Path | str = "analysis_results.csv",
+    start_year: int = _DEFAULT_START_YEAR,
+    end_year: int = _DEFAULT_END_YEAR,
+) -> dict[str, pd.DataFrame]:
+    """Execute the full statistical analysis pipeline.
+
+    Args:
+        master_path: Path to the master dataset CSV.
+        output_path: Path for exported results.
+        start_year: Baseline year for income-group comparisons.
+        end_year: Comparison year for income-group comparisons.
+
+    Returns:
+        Dictionary of result DataFrames keyed by analysis name.
+    """
+    master_df = load_master_dataset(master_path)
+    income_mapping = fetch_country_income_groups()
+
+    gap_results = analyze_income_group_gender_gap_change(
+        master_df, start_year=start_year, end_year=end_year
+    )
+    variability_results = analyze_income_group_variability_change(
+        master_df, income_mapping, start_year=start_year, end_year=end_year
+    )
+    correlations = compute_country_correlations(master_df)
+    correlation_summaries = summarize_correlation_extremes(correlations)
+
+    export_analysis_results(
+        gap_results,
+        variability_results,
+        correlations,
+        correlation_summaries,
+        output_path=output_path,
+    )
+
+    return {
+        "gender_gap_change": gap_results,
+        "variability_change": variability_results,
+        "correlations": correlations,
+        **correlation_summaries,
+    }
+
+
+if __name__ == "__main__":
+    configure_logging()
+    results = run_analysis()
+
+    gap_winner = results["gender_gap_change"].loc[
+        results["gender_gap_change"]["Largest_Change"], "Income_Group"
+    ].iloc[0]
+    variability_winner = results["variability_change"].loc[
+        results["variability_change"]["Largest_Change"], "Income_Group"
+    ].iloc[0]
+
+    print("=== Question 1: Gender gap change by income group ===")
+    print(results["gender_gap_change"].to_string(index=False))
+    print(f"\nAnswer: {gap_winner}")
+
+    print("\n=== Question 2: Life expectancy variability change ===")
+    print(results["variability_change"].to_string(index=False))
+    print(f"\nAnswer: {variability_winner}")
+
+    print("\n=== Question 3: Fertility vs life expectancy correlations ===")
+    print("\nHighest positive:")
+    print(results["highest_positive"][["Country", "Correlation"]].to_string(index=False))
+    print("\nHighest negative:")
+    print(results["highest_negative"][["Country", "Correlation"]].to_string(index=False))
+    print("\nLowest absolute:")
+    print(results["lowest_absolute"][["Country", "Correlation"]].to_string(index=False))
