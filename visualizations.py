@@ -21,6 +21,14 @@ _MAP_YEAR: Final[int] = 2023
 _SANKEY_START_YEAR: Final[int] = 1960
 _SANKEY_END_YEAR: Final[int] = 2023
 
+LIFE_EXPECTANCY_CATEGORIES: Final[list[str]] = [
+    "Very low life expectancy",
+    "Low life expectancy",
+    "Medium life expectancy",
+    "High life expectancy",
+    "Very high life expectancy",
+]
+
 
 def _get_aggregate_country_codes() -> set[str]:
     """Return World Bank entity codes classified as regional or income aggregates."""
@@ -144,4 +152,167 @@ def create_world_map_choropleth(
         margin={"r": 0, "t": 60, "l": 0, "b": 0},
     )
     logger.info("Created choropleth map for %d with %d countries", year, len(map_data))
+    return figure
+
+
+def categorize_life_expectancy(
+    df: pd.DataFrame,
+    year: int,
+    value_column: str = "Life_Expectancy_Total",
+) -> pd.DataFrame:
+    """Assign countries to quintile life-expectancy buckets for a given year.
+
+    Countries are ranked by life expectancy and split into five groups of
+    roughly equal size.
+
+    Args:
+        df: Master dataset.
+        year: Year to categorize.
+        value_column: Life expectancy column to rank on.
+
+    Returns:
+        DataFrame with country metadata and assigned category labels.
+    """
+    country_data = get_country_level_data(df)
+    year_data = country_data[country_data["Year"] == year].dropna(subset=[value_column])
+
+    ranked = year_data.sort_values(value_column).reset_index(drop=True)
+    ranked["Category"] = pd.qcut(
+        ranked[value_column].rank(method="first"),
+        q=len(LIFE_EXPECTANCY_CATEGORIES),
+        labels=LIFE_EXPECTANCY_CATEGORIES,
+    )
+
+    logger.info(
+        "Categorized %d countries into life-expectancy buckets for %d",
+        len(ranked),
+        year,
+    )
+    return ranked[["Country", "Country_Code", value_column, "Category"]]
+
+
+def _build_sankey_flows(
+    start_categories: pd.DataFrame,
+    end_categories: pd.DataFrame,
+) -> tuple[list[str], list[int], list[int], list[int], list[str]]:
+    """Build Sankey node labels and link indices from category assignments.
+
+    Args:
+        start_categories: Categorized countries for the start year.
+        end_categories: Categorized countries for the end year.
+
+    Returns:
+        Tuple of node labels, source indices, target indices, values, and link colors.
+    """
+    merged = start_categories.merge(
+        end_categories,
+        on="Country_Code",
+        suffixes=("_start", "_end"),
+    )
+
+    start_nodes = [f"{_SANKEY_START_YEAR}: {label}" for label in LIFE_EXPECTANCY_CATEGORIES]
+    end_nodes = [f"{_SANKEY_END_YEAR}: {label}" for label in LIFE_EXPECTANCY_CATEGORIES]
+    all_nodes = start_nodes + end_nodes
+    node_index = {label: index for index, label in enumerate(all_nodes)}
+
+    flows = (
+        merged.groupby(["Category_start", "Category_end"])
+        .size()
+        .reset_index(name="Count")
+    )
+
+    category_colors = {
+        "Very low life expectancy": "rgba(215, 48, 39, 0.45)",
+        "Low life expectancy": "rgba(244, 109, 67, 0.45)",
+        "Medium life expectancy": "rgba(254, 224, 139, 0.55)",
+        "High life expectancy": "rgba(171, 221, 164, 0.55)",
+        "Very high life expectancy": "rgba(102, 194, 165, 0.55)",
+    }
+
+    sources: list[int] = []
+    targets: list[int] = []
+    values: list[int] = []
+    link_colors: list[str] = []
+
+    for _, row in flows.iterrows():
+        source_label = f"{_SANKEY_START_YEAR}: {row['Category_start']}"
+        target_label = f"{_SANKEY_END_YEAR}: {row['Category_end']}"
+        sources.append(node_index[source_label])
+        targets.append(node_index[target_label])
+        values.append(int(row["Count"]))
+        link_colors.append(category_colors[str(row["Category_start"])])
+
+    return all_nodes, sources, targets, values, link_colors
+
+
+def create_sankey_diagram(
+    df: pd.DataFrame,
+    start_year: int = _SANKEY_START_YEAR,
+    end_year: int = _SANKEY_END_YEAR,
+) -> go.Figure:
+    """Create a Sankey diagram of life-expectancy category transitions.
+
+    Args:
+        df: Master dataset.
+        start_year: Baseline year for categorization.
+        end_year: Comparison year for categorization.
+
+    Returns:
+        Plotly Sankey figure showing country movement between quintiles.
+    """
+    start_categories = categorize_life_expectancy(df, start_year)
+    end_categories = categorize_life_expectancy(df, end_year)
+
+    labels, sources, targets, values, link_colors = _build_sankey_flows(
+        start_categories,
+        end_categories,
+    )
+
+    node_colors = [
+        "#d73027",
+        "#fc8d59",
+        "#fee08b",
+        "#91cf60",
+        "#1a9850",
+        "#d73027",
+        "#fc8d59",
+        "#fee08b",
+        "#91cf60",
+        "#1a9850",
+    ]
+
+    sankey = go.Sankey(
+        arrangement="snap",
+        node={
+            "label": labels,
+            "pad": 18,
+            "thickness": 18,
+            "color": node_colors,
+            "hovertemplate": "<b>%{label}</b><extra></extra>",
+        },
+        link={
+            "source": sources,
+            "target": targets,
+            "value": values,
+            "color": link_colors,
+            "hovertemplate": (
+                "%{source.label} → %{target.label}<br>"
+                "Countries: %{value}<extra></extra>"
+            ),
+        },
+    )
+
+    figure = go.Figure(sankey)
+    figure.update_layout(
+        title=(
+            f"Life Expectancy Category Transitions "
+            f"({start_year} → {end_year})"
+        ),
+    )
+    logger.info(
+        "Created Sankey diagram for %d → %d with %d flows",
+        start_year,
+        end_year,
+        len(values),
+    )
     return figure
