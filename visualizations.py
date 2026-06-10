@@ -93,3 +93,55 @@ def create_life_expectancy_timeseries(df: pd.DataFrame) -> go.Figure:
     )
     logger.info("Created life expectancy time-series chart")
     return figure
+
+
+def create_world_map_choropleth(
+    df: pd.DataFrame,
+    year: int = _MAP_YEAR,
+) -> go.Figure:
+    """Create a choropleth world map colored by life expectancy.
+
+    Args:
+        df: Master dataset.
+        year: Map year (default 2023).
+
+    Returns:
+        Plotly choropleth figure.
+    """
+    country_data = get_country_level_data(df)
+    map_data = country_data[country_data["Year"] == year].dropna(
+        subset=["Life_Expectancy_Total"]
+    )
+
+    figure = px.choropleth(
+        map_data,
+        locations="Country_Code",
+        color="Life_Expectancy_Total",
+        hover_name="Country",
+        color_continuous_scale="Viridis",
+        range_color=(map_data["Life_Expectancy_Total"].min(), map_data["Life_Expectancy_Total"].max()),
+        title=f"Life Expectancy at Birth by Country ({year})",
+        labels={"Life_Expectancy_Total": "Life Expectancy (years)"},
+    )
+
+    figure.update_traces(
+        hovertemplate=(
+            "<b>%{hovertext}</b><br>"
+            "ISO Code: %{location}<br>"
+            "Life Expectancy: %{z:.1f} years<extra></extra>"
+        )
+    )
+    figure.update_geos(
+        showcountries=True,
+        showcoastlines=True,
+        showland=True,
+        landcolor="#f5f5f5",
+        countrycolor="#cccccc",
+        projection_type="natural earth",
+    )
+    figure.update_layout(
+        coloraxis_colorbar_title="Years",
+        margin={"r": 0, "t": 60, "l": 0, "b": 0},
+    )
+    logger.info("Created choropleth map for %d with %d countries", year, len(map_data))
+    return figure
