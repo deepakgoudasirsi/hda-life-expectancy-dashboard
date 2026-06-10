@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 from typing import Final
@@ -17,6 +18,10 @@ from data_loader import configure_logging
 logger = logging.getLogger(__name__)
 
 _WB_COUNTRY_API: Final[str] = "https://api.worldbank.org/v2/country"
+_WORLD_GEOJSON_PATH: Final[Path] = Path("data/world_110m.json")
+_WORLD_GEOJSON_URL: Final[str] = (
+    "https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json"
+)
 _MAP_YEAR: Final[int] = 2023
 _SANKEY_START_YEAR: Final[int] = 1960
 _SANKEY_END_YEAR: Final[int] = 2023
@@ -28,6 +33,39 @@ LIFE_EXPECTANCY_CATEGORIES: Final[list[str]] = [
     "High life expectancy",
     "Very high life expectancy",
 ]
+
+_INCOME_GROUP_COLORS: Final[dict[str, str]] = {
+    "High income": "#1a9850",
+    "Upper middle income": "#91cf60",
+    "Lower middle income": "#fc8d59",
+    "Low income": "#d73027",
+}
+
+_CHART_TEMPLATE: Final[dict[str, object]] = {
+    "layout": {
+        "template": "plotly_white",
+        "font": {"family": "Arial, Helvetica, sans-serif", "size": 13, "color": "#1f2937"},
+        "title": {"font": {"size": 22, "color": "#111827"}, "x": 0.02, "xanchor": "left"},
+        "paper_bgcolor": "#ffffff",
+        "plot_bgcolor": "#fafafa",
+        "hoverlabel": {
+            "bgcolor": "#111827",
+            "font_size": 12,
+            "font_family": "Arial, Helvetica, sans-serif",
+        },
+        "legend": {
+            "orientation": "h",
+            "yanchor": "bottom",
+            "y": 1.02,
+            "xanchor": "left",
+            "x": 0,
+            "bgcolor": "rgba(255,255,255,0.8)",
+            "bordercolor": "#e5e7eb",
+            "borderwidth": 1,
+        },
+        "margin": {"l": 60, "r": 30, "t": 90, "b": 60},
+    }
+}
 
 
 def _get_aggregate_country_codes() -> set[str]:
@@ -46,6 +84,30 @@ def _get_aggregate_country_codes() -> set[str]:
     }
 
 
+def get_world_geojson(
+    cache_path: Path = _WORLD_GEOJSON_PATH,
+    geojson_url: str = _WORLD_GEOJSON_URL,
+) -> dict:
+    """Load Plotly world GeoJSON, downloading and caching it when missing.
+
+    Args:
+        cache_path: Local cache path for the GeoJSON file.
+        geojson_url: Remote GeoJSON source used for first-time download.
+
+    Returns:
+        Parsed GeoJSON dictionary for choropleth maps.
+    """
+    if cache_path.exists():
+        return json.loads(cache_path.read_text(encoding="utf-8"))
+
+    logger.info("Downloading world GeoJSON from %s", geojson_url)
+    response = requests.get(geojson_url, timeout=60)
+    response.raise_for_status()
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(response.text, encoding="utf-8")
+    return json.loads(response.text)
+
+
 def get_country_level_data(df: pd.DataFrame) -> pd.DataFrame:
     """Return country-level rows excluding World Bank aggregate entities.
 
@@ -59,6 +121,103 @@ def get_country_level_data(df: pd.DataFrame) -> pd.DataFrame:
     country_df = df[~df["Country_Code"].isin(aggregate_codes)].copy()
     logger.info("Prepared %d country-level rows for visualization", len(country_df))
     return country_df
+
+
+def apply_chart_theme(figure: go.Figure) -> go.Figure:
+    """Apply shared styling for professional, consistent chart presentation.
+
+    Args:
+        figure: Plotly figure to style.
+
+    Returns:
+        Styled figure.
+    """
+    layout_kwargs = _CHART_TEMPLATE["layout"]
+    figure.update_layout(**layout_kwargs)
+    figure.update_xaxes(
+        showgrid=True,
+        gridcolor="#e5e7eb",
+        linecolor="#9ca3af",
+        zeroline=False,
+    )
+    figure.update_yaxes(
+        showgrid=True,
+        gridcolor="#e5e7eb",
+        linecolor="#9ca3af",
+        zeroline=False,
+    )
+    return figure
+
+
+def export_figure_html(figure: go.Figure, output_path: Path | str) -> Path:
+    """Export a Plotly figure to a standalone HTML file.
+
+    Args:
+        figure: Plotly figure to export.
+        output_path: Destination HTML path.
+
+    Returns:
+        Resolved path to the written HTML file.
+    """
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    figure.write_html(
+        str(path),
+        include_plotlyjs="cdn",
+        full_html=True,
+        config={"displayModeBar": True, "responsive": True},
+    )
+    logger.info("Exported HTML visualization to %s", path)
+    return path
+
+
+def export_figure_png(
+    figure: go.Figure,
+    output_path: Path | str,
+    *,
+    width: int = 1280,
+    height: int = 720,
+    scale: int = 2,
+) -> Path:
+    """Export a Plotly figure to PNG using Kaleido.
+
+    Args:
+        figure: Plotly figure to export.
+        output_path: Destination PNG path.
+        width: Image width in pixels.
+        height: Image height in pixels.
+        scale: Resolution scale factor.
+
+    Returns:
+        Resolved path to the written PNG file.
+    """
+    path = Path(output_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    figure.write_image(str(path), width=width, height=height, scale=scale)
+    logger.info("Exported PNG visualization to %s", path)
+    return path
+
+
+def export_figure(
+    figure: go.Figure,
+    html_path: Path | str,
+    png_path: Path | str | None = None,
+) -> tuple[Path, Path | None]:
+    """Export a figure to HTML and optionally PNG.
+
+    Args:
+        figure: Plotly figure to export.
+        html_path: Destination HTML path.
+        png_path: Optional destination PNG path.
+
+    Returns:
+        Tuple of HTML path and optional PNG path.
+    """
+    html_output = export_figure_html(figure, html_path)
+    png_output = None
+    if png_path is not None:
+        png_output = export_figure_png(figure, png_path)
+    return html_output, png_output
 
 
 def create_life_expectancy_timeseries(df: pd.DataFrame) -> go.Figure:
@@ -83,22 +242,28 @@ def create_life_expectancy_timeseries(df: pd.DataFrame) -> go.Figure:
         color="Income Group",
         markers=True,
         category_orders={"Income Group": INCOME_GROUPS},
+        color_discrete_map=_INCOME_GROUP_COLORS,
         title="Life Expectancy at Birth by Income Group",
         labels={"Year": "Year", "Life Expectancy": "Life Expectancy (years)"},
     )
 
     figure.update_traces(
+        mode="lines+markers",
+        line={"width": 2.5},
+        marker={"size": 6},
         hovertemplate=(
             "<b>%{fullData.name}</b><br>"
             "Year: %{x}<br>"
             "Life Expectancy: %{y:.1f} years<extra></extra>"
-        )
+        ),
     )
     figure.update_layout(
         xaxis_title="Year",
         yaxis_title="Life Expectancy (years)",
         legend_title="Income Group",
+        hovermode="x unified",
     )
+    apply_chart_theme(figure)
     logger.info("Created life expectancy time-series chart")
     return figure
 
@@ -120,37 +285,32 @@ def create_world_map_choropleth(
     map_data = country_data[country_data["Year"] == year].dropna(
         subset=["Life_Expectancy_Total"]
     )
+    geojson = get_world_geojson()
 
-    figure = px.choropleth(
-        map_data,
-        locations="Country_Code",
-        color="Life_Expectancy_Total",
-        hover_name="Country",
-        color_continuous_scale="Viridis",
-        range_color=(map_data["Life_Expectancy_Total"].min(), map_data["Life_Expectancy_Total"].max()),
-        title=f"Life Expectancy at Birth by Country ({year})",
-        labels={"Life_Expectancy_Total": "Life Expectancy (years)"},
-    )
-
-    figure.update_traces(
-        hovertemplate=(
-            "<b>%{hovertext}</b><br>"
-            "ISO Code: %{location}<br>"
-            "Life Expectancy: %{z:.1f} years<extra></extra>"
+    figure = go.Figure(
+        data=go.Choroplethmap(
+            geojson=geojson,
+            featureidkey="id",
+            locations=map_data["Country_Code"],
+            z=map_data["Life_Expectancy_Total"],
+            text=map_data["Country"],
+            colorscale="Viridis",
+            zmin=map_data["Life_Expectancy_Total"].min(),
+            zmax=map_data["Life_Expectancy_Total"].max(),
+            colorbar={"title": "Years"},
+            hovertemplate=(
+                "<b>%{text}</b><br>"
+                "ISO Code: %{location}<br>"
+                "Life Expectancy: %{z:.1f} years<extra></extra>"
+            ),
         )
     )
-    figure.update_geos(
-        showcountries=True,
-        showcoastlines=True,
-        showland=True,
-        landcolor="#f5f5f5",
-        countrycolor="#cccccc",
-        projection_type="natural earth",
-    )
     figure.update_layout(
-        coloraxis_colorbar_title="Years",
-        margin={"r": 0, "t": 60, "l": 0, "b": 0},
+        title=f"Life Expectancy at Birth by Country ({year})",
+        map=dict(style="white-bg", center={"lat": 20, "lon": 0}, zoom=0.8),
+        margin={"r": 0, "t": 80, "l": 0, "b": 0},
     )
+    apply_chart_theme(figure)
     logger.info("Created choropleth map for %d with %d countries", year, len(map_data))
     return figure
 
@@ -308,7 +468,11 @@ def create_sankey_diagram(
             f"Life Expectancy Category Transitions "
             f"({start_year} → {end_year})"
         ),
+        height=720,
+        margin={"l": 20, "r": 20, "t": 80, "b": 20},
     )
+    apply_chart_theme(figure)
+    figure.update_layout(showlegend=False, plot_bgcolor="#ffffff")
     logger.info(
         "Created Sankey diagram for %d → %d with %d flows",
         start_year,
@@ -316,3 +480,51 @@ def create_sankey_diagram(
         len(values),
     )
     return figure
+
+
+def run_visualizations(
+    master_path: Path | str = "master_dataset.csv",
+    output_dir: Path | str = ".",
+) -> dict[str, go.Figure]:
+    """Build and export all required visualizations.
+
+    Args:
+        master_path: Path to the master dataset CSV.
+        output_dir: Directory for HTML and PNG exports.
+
+    Returns:
+        Dictionary mapping visualization names to Plotly figures.
+    """
+    output_directory = Path(output_dir)
+    master_df = load_master_dataset(master_path)
+
+    figures = {
+        "life_expectancy_trend": create_life_expectancy_timeseries(master_df),
+        "world_map": create_world_map_choropleth(master_df),
+        "sankey": create_sankey_diagram(master_df),
+    }
+
+    export_specs = {
+        "life_expectancy_trend": "life_expectancy_trend",
+        "world_map": "world_map",
+        "sankey": "sankey",
+    }
+
+    for key, stem in export_specs.items():
+        export_figure(
+            figures[key],
+            output_directory / f"{stem}.html",
+            output_directory / f"{stem}.png",
+        )
+
+    logger.info("Exported %d visualizations to %s", len(figures), output_directory)
+    return figures
+
+
+if __name__ == "__main__":
+    configure_logging()
+    charts = run_visualizations()
+    print("Generated visualizations:")
+    for name in charts:
+        print(f"  - {name}.html")
+        print(f"  - {name}.png")
