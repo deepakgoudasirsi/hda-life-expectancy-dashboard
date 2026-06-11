@@ -11,28 +11,29 @@ from pathlib import Path
 from typing import Final
 
 import pandas as pd
-import requests
 from scipy.stats import pearsonr
 
+from config import (
+    DEFAULT_END_YEAR,
+    DEFAULT_START_YEAR,
+    INCOME_GROUPS,
+    MASTER_DATASET_PATH,
+)
 from data_loader import configure_logging
+from exceptions import DataLoadError, MetadataFetchError, PipelineError
+from wb_metadata import fetch_country_income_groups, get_aggregate_country_codes
 
 logger = logging.getLogger(__name__)
 
-INCOME_GROUPS: Final[list[str]] = [
-    "High income",
-    "Upper middle income",
-    "Lower middle income",
-    "Low income",
-]
-
-_WB_COUNTRY_API: Final[str] = "https://api.worldbank.org/v2/country"
-_DEFAULT_START_YEAR: Final[int] = 1960
-_DEFAULT_END_YEAR: Final[int] = 2023
+_DEFAULT_START_YEAR: Final[int] = DEFAULT_START_YEAR
+_DEFAULT_END_YEAR: Final[int] = DEFAULT_END_YEAR
 _MIN_CORRELATION_YEARS: Final[int] = 3
 _TOP_N_COUNTRIES: Final[int] = 10
 
 
-def load_master_dataset(path: Path | str = "master_dataset.csv") -> pd.DataFrame:
+def load_master_dataset(
+    path: Path | str = MASTER_DATASET_PATH,
+) -> pd.DataFrame:
     """Load the merged master dataset from CSV.
 
     Args:
@@ -40,9 +41,20 @@ def load_master_dataset(path: Path | str = "master_dataset.csv") -> pd.DataFrame
 
     Returns:
         Master DataFrame with country-year indicator values.
+
+    Raises:
+        DataLoadError: If the dataset file is missing or cannot be parsed.
     """
-    dataset = pd.read_csv(path)
-    logger.info("Loaded master dataset: %d rows from %s", len(dataset), path)
+    dataset_path = Path(path)
+    if not dataset_path.exists():
+        raise DataLoadError(f"Master dataset not found: {dataset_path}")
+
+    try:
+        dataset = pd.read_csv(dataset_path)
+    except (OSError, pd.errors.ParserError) as exc:
+        raise DataLoadError(f"Failed to read master dataset: {dataset_path}") from exc
+
+    logger.info("Loaded master dataset: %d rows from %s", len(dataset), dataset_path)
     return dataset
 
 
@@ -123,47 +135,6 @@ def analyze_income_group_gender_gap_change(
     return gap_by_year
 
 
-def fetch_country_income_groups(
-    api_url: str = _WB_COUNTRY_API,
-    timeout: int = 60,
-) -> pd.DataFrame:
-    """Fetch World Bank country-to-income-group mappings from the API.
-
-    Args:
-        api_url: World Bank country metadata API base URL.
-        timeout: HTTP request timeout in seconds.
-
-    Returns:
-        DataFrame with columns ``Country_Code``, ``Country``, ``Income_Group``.
-    """
-    logger.info("Fetching country income classifications from World Bank API")
-    response = requests.get(
-        api_url,
-        params={"format": "json", "per_page": 400},
-        timeout=timeout,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    countries = payload[1] if isinstance(payload, list) and len(payload) > 1 else []
-
-    records: list[dict[str, str]] = []
-    for country in countries:
-        income_group = country.get("incomeLevel", {}).get("value")
-        if income_group in (None, "Aggregates", "Not classified"):
-            continue
-        records.append(
-            {
-                "Country_Code": country["id"],
-                "Country": country["name"],
-                "Income_Group": income_group,
-            }
-        )
-
-    mapping = pd.DataFrame(records)
-    logger.info("Fetched income groups for %d countries", len(mapping))
-    return mapping
-
-
 def filter_country_level_data(
     df: pd.DataFrame,
     income_mapping: pd.DataFrame,
@@ -177,19 +148,7 @@ def filter_country_level_data(
     Returns:
         Country-level DataFrame excluding regional and income aggregates.
     """
-    wb_response = requests.get(
-        _WB_COUNTRY_API,
-        params={"format": "json", "per_page": 400},
-        timeout=60,
-    )
-    wb_response.raise_for_status()
-    wb_countries = wb_response.json()[1]
-    aggregate_entities = {
-        country["id"]
-        for country in wb_countries
-        if country.get("incomeLevel", {}).get("value") == "Aggregates"
-    }
-
+    aggregate_entities = get_aggregate_country_codes()
     country_df = df[~df["Country_Code"].isin(aggregate_entities)].copy()
     country_df = country_df.merge(
         income_mapping[["Country_Code", "Income_Group"]],
@@ -272,22 +231,6 @@ def analyze_income_group_variability_change(
     return results
 
 
-def _get_aggregate_country_codes() -> set[str]:
-    """Return World Bank entity codes classified as aggregates."""
-    response = requests.get(
-        _WB_COUNTRY_API,
-        params={"format": "json", "per_page": 400},
-        timeout=60,
-    )
-    response.raise_for_status()
-    countries = response.json()[1]
-    return {
-        country["id"]
-        for country in countries
-        if country.get("incomeLevel", {}).get("value") == "Aggregates"
-    }
-
-
 def compute_country_correlations(
     df: pd.DataFrame,
     x_column: str = "Fertility_Rate",
@@ -305,7 +248,7 @@ def compute_country_correlations(
     Returns:
         DataFrame with correlation, p-value, and observation count per country.
     """
-    aggregate_codes = _get_aggregate_country_codes()
+    aggregate_codes = get_aggregate_country_codes()
     country_df = df[~df["Country_Code"].isin(aggregate_codes)].copy()
 
     records: list[dict[str, object]] = []
@@ -419,8 +362,11 @@ def run_analysis(
     Returns:
         Dictionary of result DataFrames keyed by analysis name.
     """
-    master_df = load_master_dataset(master_path)
-    income_mapping = fetch_country_income_groups()
+    try:
+        master_df = load_master_dataset(master_path)
+        income_mapping = fetch_country_income_groups()
+    except (DataLoadError, MetadataFetchError) as exc:
+        raise PipelineError("Analysis pipeline failed during data loading.") from exc
 
     gap_results = analyze_income_group_gender_gap_change(
         master_df, start_year=start_year, end_year=end_year

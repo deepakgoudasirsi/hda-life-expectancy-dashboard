@@ -12,8 +12,16 @@ import plotly.express as px
 import plotly.graph_objects as go
 import requests
 
-from analysis import INCOME_GROUPS, get_aggregate_income_group_data, load_master_dataset
+from analysis import get_aggregate_income_group_data, load_master_dataset
+from config import (
+    DEFAULT_END_YEAR,
+    DEFAULT_START_YEAR,
+    FIGURES_DIR,
+    INCOME_GROUP_COLORS,
+    INCOME_GROUPS,
+)
 from data_loader import configure_logging
+from wb_metadata import get_aggregate_country_codes
 
 logger = logging.getLogger(__name__)
 
@@ -22,9 +30,9 @@ _WORLD_GEOJSON_PATH: Final[Path] = Path("data/world_110m.json")
 _WORLD_GEOJSON_URL: Final[str] = (
     "https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json"
 )
-_MAP_YEAR: Final[int] = 2023
-_SANKEY_START_YEAR: Final[int] = 1960
-_SANKEY_END_YEAR: Final[int] = 2023
+_MAP_YEAR: Final[int] = DEFAULT_END_YEAR
+_SANKEY_START_YEAR: Final[int] = DEFAULT_START_YEAR
+_SANKEY_END_YEAR: Final[int] = DEFAULT_END_YEAR
 
 LIFE_EXPECTANCY_CATEGORIES: Final[list[str]] = [
     "Very low life expectancy",
@@ -34,12 +42,7 @@ LIFE_EXPECTANCY_CATEGORIES: Final[list[str]] = [
     "Very high life expectancy",
 ]
 
-_INCOME_GROUP_COLORS: Final[dict[str, str]] = {
-    "High income": "#1a9850",
-    "Upper middle income": "#91cf60",
-    "Lower middle income": "#fc8d59",
-    "Low income": "#d73027",
-}
+_INCOME_GROUP_COLORS: Final[dict[str, str]] = INCOME_GROUP_COLORS
 
 _CHART_TEMPLATE: Final[dict[str, object]] = {
     "layout": {
@@ -68,35 +71,19 @@ _CHART_TEMPLATE: Final[dict[str, object]] = {
 }
 
 
-def _get_aggregate_country_codes() -> set[str]:
-    """Return World Bank entity codes classified as regional or income aggregates."""
-    response = requests.get(
-        _WB_COUNTRY_API,
-        params={"format": "json", "per_page": 400},
-        timeout=60,
-    )
-    response.raise_for_status()
-    countries = response.json()[1]
-    return {
-        country["id"]
-        for country in countries
-        if country.get("incomeLevel", {}).get("value") == "Aggregates"
-    }
+def get_country_level_data(df: pd.DataFrame) -> pd.DataFrame:
+    """Return country-level rows excluding World Bank aggregate entities."""
+    aggregate_codes = get_aggregate_country_codes()
+    country_df = df[~df["Country_Code"].isin(aggregate_codes)].copy()
+    logger.info("Prepared %d country-level rows for visualization", len(country_df))
+    return country_df
 
 
 def get_world_geojson(
     cache_path: Path = _WORLD_GEOJSON_PATH,
     geojson_url: str = _WORLD_GEOJSON_URL,
 ) -> dict:
-    """Load Plotly world GeoJSON, downloading and caching it when missing.
-
-    Args:
-        cache_path: Local cache path for the GeoJSON file.
-        geojson_url: Remote GeoJSON source used for first-time download.
-
-    Returns:
-        Parsed GeoJSON dictionary for choropleth maps.
-    """
+    """Load Plotly world GeoJSON, downloading and caching it when missing."""
     if cache_path.exists():
         return json.loads(cache_path.read_text(encoding="utf-8"))
 
@@ -108,30 +95,8 @@ def get_world_geojson(
     return json.loads(response.text)
 
 
-def get_country_level_data(df: pd.DataFrame) -> pd.DataFrame:
-    """Return country-level rows excluding World Bank aggregate entities.
-
-    Args:
-        df: Master dataset.
-
-    Returns:
-        Filtered DataFrame with one row per country-year.
-    """
-    aggregate_codes = _get_aggregate_country_codes()
-    country_df = df[~df["Country_Code"].isin(aggregate_codes)].copy()
-    logger.info("Prepared %d country-level rows for visualization", len(country_df))
-    return country_df
-
-
 def apply_chart_theme(figure: go.Figure) -> go.Figure:
-    """Apply shared styling for professional, consistent chart presentation.
-
-    Args:
-        figure: Plotly figure to style.
-
-    Returns:
-        Styled figure.
-    """
+    """Apply shared styling for professional, consistent chart presentation."""
     layout_kwargs = _CHART_TEMPLATE["layout"]
     figure.update_layout(**layout_kwargs)
     figure.update_xaxes(
@@ -484,7 +449,7 @@ def create_sankey_diagram(
 
 def run_visualizations(
     master_path: Path | str = "master_dataset.csv",
-    output_dir: Path | str = ".",
+    output_dir: Path | str = FIGURES_DIR,
 ) -> dict[str, go.Figure]:
     """Build and export all required visualizations.
 

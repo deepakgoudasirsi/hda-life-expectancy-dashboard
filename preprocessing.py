@@ -12,7 +12,9 @@ from typing import Final
 
 import pandas as pd
 
+from config import MASTER_COLUMNS
 from data_loader import INDICATORS, configure_logging, load_all_indicators
+from exceptions import PipelineError
 
 logger = logging.getLogger(__name__)
 
@@ -24,18 +26,6 @@ LONG_FORMAT_COLUMNS: Final[list[str]] = [
     "Indicator Code",
     "Year",
     "Value",
-]
-
-# Master dataset output schema.
-MASTER_COLUMNS: Final[list[str]] = [
-    "Country",
-    "Country_Code",
-    "Year",
-    "Life_Expectancy_Total",
-    "Life_Expectancy_Male",
-    "Life_Expectancy_Female",
-    "Fertility_Rate",
-    "Death_Rate",
 ]
 
 # Mapping from loader keys to master-dataset value column names.
@@ -189,8 +179,11 @@ def build_master_dataset(
         Clean, merged master DataFrame.
     """
     logger.info("Starting master dataset build")
-    datasets = load_all_indicators(raw_dir, force_download=force_download)
-    master_df = merge_datasets(datasets)
+    try:
+        datasets = load_all_indicators(raw_dir, force_download=force_download)
+        master_df = merge_datasets(datasets)
+    except (KeyError, ValueError, OSError) as exc:
+        raise PipelineError("Master dataset build failed.") from exc
     return master_df
 
 

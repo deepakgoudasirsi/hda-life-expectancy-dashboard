@@ -291,11 +291,9 @@ def load_all_indicators(
 
 def configure_logging(level: int = logging.INFO) -> None:
     """Configure root logging for the data pipeline."""
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    from logging_config import configure_logging as setup_logging
+
+    setup_logging(level)
 
 
 if __name__ == "__main__":
