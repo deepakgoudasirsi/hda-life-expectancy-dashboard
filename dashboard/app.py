@@ -385,6 +385,64 @@ def create_life_expectancy_trend(filtered_df: pd.DataFrame) -> go.Figure:
     return apply_chart_theme(figure)
 
 
+def create_fertility_trend(filtered_df: pd.DataFrame) -> go.Figure:
+    """Build a fertility rate trend chart for selected countries."""
+    trend_data = filtered_df.dropna(subset=["Fertility_Rate"]).copy()
+    figure = px.line(
+        trend_data,
+        x="Year",
+        y="Fertility_Rate",
+        color="Country",
+        markers=True,
+        title="Fertility Rate Trend",
+        labels={
+            "Year": "Year",
+            "Fertility_Rate": "Fertility Rate (births per woman)",
+            "Country": "Country",
+        },
+    )
+    figure.update_traces(
+        mode="lines+markers",
+        line={"width": 2.5},
+        marker={"size": 5},
+        hovertemplate=(
+            "<b>%{fullData.name}</b><br>Year: %{x}<br>"
+            "Fertility Rate: %{y:.2f}<extra></extra>"
+        ),
+    )
+    figure.update_layout(hovermode="x unified", legend_title="Country")
+    return apply_chart_theme(figure)
+
+
+def create_death_rate_trend(filtered_df: pd.DataFrame) -> go.Figure:
+    """Build a crude death rate trend chart for selected countries."""
+    trend_data = filtered_df.dropna(subset=["Death_Rate"]).copy()
+    figure = px.line(
+        trend_data,
+        x="Year",
+        y="Death_Rate",
+        color="Country",
+        markers=True,
+        title="Death Rate Trend",
+        labels={
+            "Year": "Year",
+            "Death_Rate": "Death Rate (per 1,000 people)",
+            "Country": "Country",
+        },
+    )
+    figure.update_traces(
+        mode="lines+markers",
+        line={"width": 2.5},
+        marker={"size": 5},
+        hovertemplate=(
+            "<b>%{fullData.name}</b><br>Year: %{x}<br>"
+            "Death Rate: %{y:.1f}<extra></extra>"
+        ),
+    )
+    figure.update_layout(hovermode="x unified", legend_title="Country")
+    return apply_chart_theme(figure)
+
+
 def get_region_aggregate_data(
     master_df: pd.DataFrame,
     year_range: tuple[int, int],
@@ -584,6 +642,20 @@ def main() -> None:
         create_life_expectancy_trend(filtered_df),
         use_container_width=True,
     )
+
+    trend_col1, trend_col2 = st.columns(2)
+    with trend_col1:
+        st.markdown('<p class="section-title">Fertility Trend</p>', unsafe_allow_html=True)
+        st.plotly_chart(
+            create_fertility_trend(filtered_df),
+            use_container_width=True,
+        )
+    with trend_col2:
+        st.markdown('<p class="section-title">Death Rate Trend</p>', unsafe_allow_html=True)
+        st.plotly_chart(
+            create_death_rate_trend(filtered_df),
+            use_container_width=True,
+        )
 
     region_df = get_region_aggregate_data(master_df, year_range, filters["regions"])
     income_df = get_income_aggregate_data(master_df, year_range, filters["income_groups"])
