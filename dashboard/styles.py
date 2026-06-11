@@ -27,7 +27,14 @@ CUSTOM_CSS: Final[str] = """
     [data-testid="stSidebar"] {
         background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
     }
-    [data-testid="stSidebar"] * {
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3,
+    [data-testid="stSidebar"] label,
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] .stMarkdown,
+    [data-testid="stSidebar"] .stCaption,
+    [data-testid="stSidebar"] [data-testid="stWidgetLabel"] {
         color: #f8fafc !important;
     }
     [data-testid="stSidebar"] .stSlider label,
@@ -35,6 +42,19 @@ CUSTOM_CSS: Final[str] = """
     [data-testid="stSidebar"] .stSelectbox label {
         font-weight: 600;
         letter-spacing: 0.02em;
+    }
+    [data-testid="stSidebar"] span[data-baseweb="tag"] {
+        background-color: #14b8a6 !important;
+        border: 1px solid #0d9488 !important;
+    }
+    [data-testid="stSidebar"] span[data-baseweb="tag"] span {
+        color: #0f172a !important;
+    }
+    [data-testid="stSidebar"] span[data-baseweb="tag"] svg {
+        fill: #0f172a !important;
+    }
+    [data-testid="stSidebar"] .filter-panel {
+        color: #cbd5e1 !important;
     }
     .dashboard-header {
         background: linear-gradient(135deg, #0f766e 0%, #115e59 45%, #134e4a 100%);
@@ -62,9 +82,9 @@ CUSTOM_CSS: Final[str] = """
         margin-bottom: 1rem;
     }
     .kpi-card {
-        background: #ffffff;
-        border: 1px solid #e2e8f0;
-        border-left: 4px solid #14b8a6;
+        background: #ffffff !important;
+        border: 1px solid #e2e8f0 !important;
+        border-left: 4px solid #14b8a6 !important;
         border-radius: 14px;
         padding: 1.25rem 1.5rem;
         box-shadow: 0 4px 14px rgba(15, 23, 42, 0.06);
@@ -76,7 +96,7 @@ CUSTOM_CSS: Final[str] = """
         box-shadow: 0 8px 20px rgba(15, 23, 42, 0.1);
     }
     .kpi-label {
-        color: #64748b;
+        color: #64748b !important;
         font-size: 0.82rem;
         font-weight: 600;
         text-transform: uppercase;
@@ -84,20 +104,20 @@ CUSTOM_CSS: Final[str] = """
         margin-bottom: 0.35rem;
     }
     .kpi-value {
-        color: #0f172a;
+        color: #0f172a !important;
         font-size: 2rem;
         font-weight: 700;
         line-height: 1.1;
     }
     .kpi-subtext {
-        color: #94a3b8;
+        color: #94a3b8 !important;
         font-size: 0.85rem;
         margin-top: 0.35rem;
     }
     .section-title {
         font-size: 1.2rem;
         font-weight: 700;
-        color: #0f172a;
+        color: #0f172a !important;
         margin: 1.25rem 0 0.75rem 0;
         padding-bottom: 0.35rem;
         border-bottom: 2px solid #14b8a6;
@@ -107,7 +127,7 @@ CUSTOM_CSS: Final[str] = """
         margin-top: 2rem;
         padding-top: 1rem;
         border-top: 1px solid #e2e8f0;
-        color: #64748b;
+        color: #64748b !important;
         font-size: 0.85rem;
     }
     @media (max-width: 768px) {
