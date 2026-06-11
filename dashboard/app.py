@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Final
 
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 import requests
 import streamlit as st
 
@@ -18,8 +20,10 @@ if str(ROOT_DIR) not in sys.path:
 from analysis import (  # noqa: E402
     INCOME_GROUPS,
     fetch_country_income_groups,
+    get_aggregate_income_group_data,
     load_master_dataset,
 )
+from visualizations import _INCOME_GROUP_COLORS, apply_chart_theme  # noqa: E402
 
 DATA_PATH = ROOT_DIR / "master_dataset.csv"
 _WB_COUNTRY_API: Final[str] = "https://api.worldbank.org/v2/country"
@@ -33,6 +37,16 @@ REGIONS: Final[list[str]] = [
     "South Asia",
     "Sub-Saharan Africa",
 ]
+
+_REGION_COLORS: Final[dict[str, str]] = {
+    "East Asia & Pacific": "#0284c7",
+    "Europe & Central Asia": "#7c3aed",
+    "Latin America & Caribbean": "#db2777",
+    "Middle East, North Africa, Afghanistan & Pakistan": "#ea580c",
+    "North America": "#059669",
+    "South Asia": "#ca8a04",
+    "Sub-Saharan Africa": "#dc2626",
+}
 
 PAGE_CONFIG = {
     "page_title": "Global Health Indicators Dashboard",
@@ -269,6 +283,256 @@ def render_sidebar(country_df: pd.DataFrame) -> dict[str, object]:
     }
 
 
+def get_latest_year_data(filtered_df: pd.DataFrame, year_range: tuple[int, int]) -> pd.DataFrame:
+    """Return the most recent available row per country within the year range."""
+    if filtered_df.empty:
+        return filtered_df
+    _, end_year = year_range
+    in_range = filtered_df[filtered_df["Year"] <= end_year].copy()
+    return (
+        in_range.sort_values("Year")
+        .groupby("Country", as_index=False)
+        .tail(1)
+        .reset_index(drop=True)
+    )
+
+
+def render_kpi_cards(latest_df: pd.DataFrame, end_year: int) -> None:
+    """Render headline KPI metrics for the selected countries."""
+    st.markdown('<p class="section-title">Key Performance Indicators</p>', unsafe_allow_html=True)
+
+    life_expectancy = latest_df["Life_Expectancy_Total"].mean()
+    fertility = latest_df["Fertility_Rate"].mean()
+    death_rate = latest_df["Death_Rate"].mean()
+    gender_gap = (
+        latest_df["Life_Expectancy_Female"] - latest_df["Life_Expectancy_Male"]
+    ).mean()
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+        st.markdown(
+            f"""
+            <div class="kpi-card">
+                <div class="kpi-label">Current Life Expectancy</div>
+                <div class="kpi-value">{life_expectancy:.1f}</div>
+                <div class="kpi-subtext">years · as of {end_year}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with col2:
+        st.markdown(
+            f"""
+            <div class="kpi-card">
+                <div class="kpi-label">Current Fertility Rate</div>
+                <div class="kpi-value">{fertility:.2f}</div>
+                <div class="kpi-subtext">births per woman · {end_year}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with col3:
+        st.markdown(
+            f"""
+            <div class="kpi-card">
+                <div class="kpi-label">Current Death Rate</div>
+                <div class="kpi-value">{death_rate:.1f}</div>
+                <div class="kpi-subtext">per 1,000 people · {end_year}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    with col4:
+        st.markdown(
+            f"""
+            <div class="kpi-card">
+                <div class="kpi-label">Male-Female Gap</div>
+                <div class="kpi-value">{gender_gap:.1f}</div>
+                <div class="kpi-subtext">years (female − male) · {end_year}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+def create_life_expectancy_trend(filtered_df: pd.DataFrame) -> go.Figure:
+    """Build a life expectancy trend chart for selected countries."""
+    trend_data = filtered_df.dropna(subset=["Life_Expectancy_Total"]).copy()
+    figure = px.line(
+        trend_data,
+        x="Year",
+        y="Life_Expectancy_Total",
+        color="Country",
+        markers=True,
+        title="Life Expectancy Trend",
+        labels={
+            "Year": "Year",
+            "Life_Expectancy_Total": "Life Expectancy (years)",
+            "Country": "Country",
+        },
+    )
+    figure.update_traces(
+        mode="lines+markers",
+        line={"width": 2.5},
+        marker={"size": 5},
+        hovertemplate=(
+            "<b>%{fullData.name}</b><br>Year: %{x}<br>"
+            "Life Expectancy: %{y:.1f} years<extra></extra>"
+        ),
+    )
+    figure.update_layout(hovermode="x unified", legend_title="Country")
+    return apply_chart_theme(figure)
+
+
+def get_region_aggregate_data(
+    master_df: pd.DataFrame,
+    year_range: tuple[int, int],
+    regions: list[str],
+) -> pd.DataFrame:
+    """Extract regional aggregate series for comparison charts."""
+    start_year, end_year = year_range
+    region_df = master_df[
+        master_df["Country"].isin(regions if regions else REGIONS)
+        & (master_df["Year"] >= start_year)
+        & (master_df["Year"] <= end_year)
+    ].copy()
+    region_df = region_df.rename(columns={"Country": "Region"})
+    return region_df
+
+
+def get_income_aggregate_data(
+    master_df: pd.DataFrame,
+    year_range: tuple[int, int],
+    income_groups: list[str],
+) -> pd.DataFrame:
+    """Extract income-group aggregate series for comparison charts."""
+    income_data = get_aggregate_income_group_data(master_df)
+    start_year, end_year = year_range
+    selected_groups = income_groups if income_groups else INCOME_GROUPS
+    income_data = income_data[
+        income_data["Country"].isin(selected_groups)
+        & (income_data["Year"] >= start_year)
+        & (income_data["Year"] <= end_year)
+    ].copy()
+    return income_data.rename(columns={"Country": "Income Group"})
+
+
+def create_region_comparison(
+    region_df: pd.DataFrame,
+    end_year: int,
+) -> go.Figure:
+    """Build a grouped bar chart comparing life expectancy across regions."""
+    latest = (
+        region_df.dropna(subset=["Life_Expectancy_Total"])
+        .sort_values("Year")
+        .groupby("Region", as_index=False)
+        .tail(1)
+    )
+    figure = px.bar(
+        latest,
+        x="Region",
+        y="Life_Expectancy_Total",
+        color="Region",
+        category_orders={"Region": REGIONS},
+        color_discrete_map=_REGION_COLORS,
+        title=f"Region Comparison · Life Expectancy ({end_year})",
+        labels={
+            "Region": "Region",
+            "Life_Expectancy_Total": "Life Expectancy (years)",
+        },
+        text=latest["Life_Expectancy_Total"].round(1),
+    )
+    figure.update_traces(
+        textposition="outside",
+        hovertemplate=(
+            "<b>%{x}</b><br>Life Expectancy: %{y:.1f} years<extra></extra>"
+        ),
+    )
+    figure.update_layout(showlegend=False, xaxis_tickangle=-25)
+    return apply_chart_theme(figure)
+
+
+def create_income_group_comparison(
+    income_df: pd.DataFrame,
+    end_year: int,
+) -> go.Figure:
+    """Build a grouped bar chart comparing life expectancy across income groups."""
+    latest = (
+        income_df.dropna(subset=["Life_Expectancy_Total"])
+        .sort_values("Year")
+        .groupby("Income Group", as_index=False)
+        .tail(1)
+    )
+    figure = px.bar(
+        latest,
+        x="Income Group",
+        y="Life_Expectancy_Total",
+        color="Income Group",
+        category_orders={"Income Group": INCOME_GROUPS},
+        color_discrete_map=_INCOME_GROUP_COLORS,
+        title=f"Income Group Comparison · Life Expectancy ({end_year})",
+        labels={
+            "Income Group": "Income Group",
+            "Life_Expectancy_Total": "Life Expectancy (years)",
+        },
+        text=latest["Life_Expectancy_Total"].round(1),
+    )
+    figure.update_traces(
+        textposition="outside",
+        hovertemplate=(
+            "<b>%{x}</b><br>Life Expectancy: %{y:.1f} years<extra></extra>"
+        ),
+    )
+    figure.update_layout(showlegend=False, xaxis_tickangle=-15)
+    return apply_chart_theme(figure)
+
+
+def render_data_table(filtered_df: pd.DataFrame) -> None:
+    """Render a searchable, sortable data table."""
+    st.markdown('<p class="section-title">Data Table</p>', unsafe_allow_html=True)
+
+    display_df = filtered_df[
+        [
+            "Country",
+            "Country_Code",
+            "Region",
+            "Income_Group",
+            "Year",
+            "Life_Expectancy_Total",
+            "Life_Expectancy_Male",
+            "Life_Expectancy_Female",
+            "Fertility_Rate",
+            "Death_Rate",
+        ]
+    ].rename(
+        columns={
+            "Country_Code": "Code",
+            "Income_Group": "Income Group",
+            "Life_Expectancy_Total": "Life Expectancy",
+            "Life_Expectancy_Male": "Male LE",
+            "Life_Expectancy_Female": "Female LE",
+            "Fertility_Rate": "Fertility Rate",
+            "Death_Rate": "Death Rate",
+        }
+    )
+
+    st.dataframe(
+        display_df,
+        use_container_width=True,
+        hide_index=True,
+        height=420,
+    )
+
+    csv_data = display_df.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        label="Download filtered data (CSV)",
+        data=csv_data,
+        file_name="health_indicators_filtered.csv",
+        mime="text/csv",
+    )
+
+
 def apply_page_style() -> None:
     """Inject global page configuration and custom styling."""
     st.set_page_config(**PAGE_CONFIG)
@@ -309,7 +573,34 @@ def main() -> None:
         st.warning("No data matches the current filters. Adjust your selections in the sidebar.")
         return
 
-    st.success("Filters applied. Dashboard sections load below.")
+    year_range = filters["year_range"]
+    end_year = year_range[1]
+    latest_df = get_latest_year_data(filtered_df, year_range)
+
+    render_kpi_cards(latest_df, end_year)
+
+    st.markdown('<p class="section-title">Life Expectancy Trend</p>', unsafe_allow_html=True)
+    st.plotly_chart(
+        create_life_expectancy_trend(filtered_df),
+        use_container_width=True,
+    )
+
+    region_df = get_region_aggregate_data(master_df, year_range, filters["regions"])
+    income_df = get_income_aggregate_data(master_df, year_range, filters["income_groups"])
+
+    compare_col1, compare_col2 = st.columns(2)
+    with compare_col1:
+        st.plotly_chart(
+            create_region_comparison(region_df, end_year),
+            use_container_width=True,
+        )
+    with compare_col2:
+        st.plotly_chart(
+            create_income_group_comparison(income_df, end_year),
+            use_container_width=True,
+        )
+
+    render_data_table(filtered_df)
 
 
 if __name__ == "__main__":
