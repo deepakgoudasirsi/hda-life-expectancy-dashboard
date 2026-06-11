@@ -12,7 +12,6 @@ CACHE_DIR: Final[Path] = DATA_DIR / "cache"
 OUTPUTS_DIR: Final[Path] = PROJECT_ROOT / "outputs"
 FIGURES_DIR: Final[Path] = OUTPUTS_DIR / "figures"
 SCREENSHOTS_DIR: Final[Path] = OUTPUTS_DIR / "screenshots"
-ANALYSIS_OUTPUT_DIR: Final[Path] = OUTPUTS_DIR / "analysis"
 
 MASTER_DATASET_PATH: Final[Path] = PROJECT_ROOT / "master_dataset.csv"
 ANALYSIS_RESULTS_PATH: Final[Path] = PROJECT_ROOT / "analysis_results.csv"

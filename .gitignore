@@ -5,9 +5,6 @@ __pycache__/
 .DS_Store
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
 *.log
-outputs/analysis/*
-!outputs/analysis/.gitkeep
-outputs/figures/*
-!outputs/figures/.gitkeep
-outputs/screenshots/
+data/cache/
