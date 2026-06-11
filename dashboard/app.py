@@ -443,6 +443,50 @@ def create_death_rate_trend(filtered_df: pd.DataFrame) -> go.Figure:
     return apply_chart_theme(figure)
 
 
+def create_gender_life_expectancy_trend(filtered_df: pd.DataFrame) -> go.Figure:
+    """Build male versus female life expectancy trends for selected countries."""
+    gender_data = filtered_df[
+        ["Country", "Year", "Life_Expectancy_Male", "Life_Expectancy_Female"]
+    ].copy()
+    gender_long = gender_data.melt(
+        id_vars=["Country", "Year"],
+        value_vars=["Life_Expectancy_Male", "Life_Expectancy_Female"],
+        var_name="Sex",
+        value_name="Life Expectancy",
+    )
+    gender_long["Sex"] = gender_long["Sex"].map(
+        {
+            "Life_Expectancy_Male": "Male",
+            "Life_Expectancy_Female": "Female",
+        }
+    )
+    gender_long = gender_long.dropna(subset=["Life Expectancy"])
+
+    figure = px.line(
+        gender_long,
+        x="Year",
+        y="Life Expectancy",
+        color="Sex",
+        line_dash="Country",
+        markers=True,
+        category_orders={"Sex": ["Male", "Female"]},
+        color_discrete_map={"Male": "#2563eb", "Female": "#db2777"},
+        title="Male vs Female Life Expectancy Trend",
+        labels={"Year": "Year", "Life Expectancy": "Life Expectancy (years)"},
+    )
+    figure.update_traces(
+        mode="lines+markers",
+        line={"width": 2.5},
+        marker={"size": 5},
+        hovertemplate=(
+            "<b>%{fullData.name}</b><br>Year: %{x}<br>"
+            "Life Expectancy: %{y:.1f} years<extra></extra>"
+        ),
+    )
+    figure.update_layout(hovermode="x unified", legend_title="Sex")
+    return apply_chart_theme(figure)
+
+
 def get_region_aggregate_data(
     master_df: pd.DataFrame,
     year_range: tuple[int, int],
@@ -656,6 +700,15 @@ def main() -> None:
             create_death_rate_trend(filtered_df),
             use_container_width=True,
         )
+
+    st.markdown(
+        '<p class="section-title">Male vs Female Life Expectancy Trend</p>',
+        unsafe_allow_html=True,
+    )
+    st.plotly_chart(
+        create_gender_life_expectancy_trend(filtered_df),
+        use_container_width=True,
+    )
 
     region_df = get_region_aggregate_data(master_df, year_range, filters["regions"])
     income_df = get_income_aggregate_data(master_df, year_range, filters["income_groups"])
